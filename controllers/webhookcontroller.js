@@ -1,13 +1,10 @@
 require('dotenv').config();
-// const WEBHOOK_VERIFY_TOKEN = process.env.WEBHOOK_VERIFY_TOKEN;
-const WEBHOOK_VERIFY_TOKEN = 'my-verify-token'
+const WEBHOOK_VERIFY_TOKEN = process.env.WEBHOOK_VERIFY_TOKEN;
+
 const crypto = require('crypto');
-// const WebhookService = require('../services/webhook.service');
 const { Tenant } = require('../models');
 const { 
   processIncomingMessage, 
-  processIncomingInstagramMessage, 
-  processIncomingInstagramComment 
 } = require('../services/webhookservice');
 
 exports.verifyWebhook = async (req, res) => {
@@ -17,7 +14,6 @@ exports.verifyWebhook = async (req, res) => {
       return res.status(400).json({ error: 'Tenant ID required' });
     }
 
-    // Use Sequelize instead of raw query
     const tenant = await Tenant.findOne({
       where: {
         id: tenantId,
@@ -39,7 +35,6 @@ exports.verifyWebhook = async (req, res) => {
   }
 };
 
-// Helper function to determine platform from webhook payload
 function determinePlatform(payload) {
   if (!payload || !payload.entry?.length) return 'unknown';
 
@@ -51,22 +46,22 @@ function determinePlatform(payload) {
     return 'whatsapp';
   }
 
-  // ✅ Instagram DMs (real webhooks use `messaging` array)
-  if (payload.object === 'instagram' && entry.messaging) {
-            console.log(payload.entry[0].messaging[0].message.attachments[0].payload);
-    return 'instagram_dm';
-  }
+  // // ✅ Instagram DMs (real webhooks use `messaging` array)
+  // if (payload.object === 'instagram' && entry.messaging) {
+  //           console.log(payload.entry[0].messaging[0].message.attachments[0].payload);
+  //   return 'instagram_dm';
+  // }
 
-  // ✅ Instagram Comments
-  if (payload.object === 'instagram' && changes?.field === 'comments') {
-        console.log(payload.entry[0].changes[0]);
-    return 'instagram_comment';
-  }
+  // // ✅ Instagram Comments
+  // if (payload.object === 'instagram' && changes?.field === 'comments') {
+  //       console.log(payload.entry[0].changes[0]);
+  //   return 'instagram_comment';
+  // }
 
-  // ✅ Instagram Test Webhooks (field = messages but still Instagram)
-  if (payload.object === 'instagram' && changes?.field === 'messages') {
-    return 'instagram_test_message';
-  }
+  // // ✅ Instagram Test Webhooks (field = messages but still Instagram)
+  // if (payload.object === 'instagram' && changes?.field === 'messages') {
+  //   return 'instagram_test_message';
+  // }
 
   return 'unknown';
 }
@@ -87,7 +82,7 @@ exports.handleIncomingWebhook = async (req, res) => {
       return res.status(404).json({ error: 'Tenant not found or inactive' });
     }
 
-    // Step 2: Verify webhook signature (optional but secure)
+    // Step 2: Verify webhook signature
     if (tenant.webhookSecret && signature) {
       const expectedSig = crypto
         .createHmac('sha256', tenant.webhookSecret)
@@ -107,12 +102,6 @@ exports.handleIncomingWebhook = async (req, res) => {
     switch (platform) {
       case 'whatsapp':
         await processIncomingMessage(tenant, payload);
-        break;
-      // case 'instagram_dm':
-      //   await processIncomingInstagramMessage(tenant, payload);
-      //   break;
-      case 'instagram_comment':
-        await processIncomingInstagramComment(tenant, payload);
         break;
       default:
         console.log('Unknown platform or payload format:', payload);

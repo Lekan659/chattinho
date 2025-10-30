@@ -1,5 +1,5 @@
-// middleware/getTenantContext.js
-const { Tenant } = require('../models'); // Adjust path as needed
+
+const { Tenant } = require('../models'); 
 
 async function getTenantContext(req, res, next) {
   try {
@@ -9,7 +9,6 @@ async function getTenantContext(req, res, next) {
       return res.status(400).json({ error: 'Tenant ID required' });
     }
 
-    // Use Sequelize instead of raw query
     const tenant = await Tenant.findOne({
       where: {
         id: tenantId,
@@ -21,7 +20,7 @@ async function getTenantContext(req, res, next) {
       return res.status(404).json({ error: 'Tenant not found or inactive' });
     }
 
-    req.tenant = tenant; // Attach Sequelize instance (not plain object)
+    req.tenant = tenant; 
     next();
   } catch (error) {
     console.error('Tenant context error:', error);

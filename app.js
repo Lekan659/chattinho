@@ -14,7 +14,7 @@ var tenantsRouter = require('./routes/tenantroutes');
 var webhookRouter = require('./routes/webhookroutes');
 const { default: axios } = require('axios');
 
-const WEBHOOK_VERIFY_TOKEN = 'my-verify-token'
+const WEBHOOK_VERIFY_TOKEN = process.env.WEBHOOK_VERIFY_TOKEN
 
 var app = express();
 
@@ -36,27 +36,6 @@ db.sequelize.authenticate()
 // db.sequelize.sync({ alter: true })
 //   .then(() => console.log('✅ DB synced!'))
 //   .catch(err => console.error('❌ DB sync failed:', err)); 
-async function sendTextMessage() {
-    const response = await axios({
-        url: 'https://graph.facebook.com/v22.0/724637504057287/messages',
-        method: 'post',
-        headers: {
-            'Authorization': `Bearer ${process.env.WHATSAPP_TOKEN}`,
-            'Content-Type': 'application/json'
-        },
-        data: JSON.stringify({
-            messaging_product: 'whatsapp',
-            to: '2348122808622',
-            type: 'text',
-            text:{
-                body: 'This is a text message'
-            }
-        })
-    })
-
-
-    console.log(response.data) 
-}
 // (Optional for dev) sync models automatically
 // db.sequelize.sync();
 

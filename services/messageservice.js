@@ -1,11 +1,10 @@
-const { Message } = require('../models'); // Adjust path as needed
+const { Message } = require('../models'); 
 const axios = require('axios');
-const { Tenant } = require('../models'); // Adjust path based on your project
+const { Tenant } = require('../models'); 
 const { updateUsageStats } = require('./usageservice');
-require('dotenv').config(); // Ensure you have dotenv configured
+require('dotenv').config(); 
 
 
-// async function logMessage(tenantId, from, to, text, direction, messageId = null, conversationId = null) {
 async function logMessage({
   tenantId,
 
@@ -104,7 +103,7 @@ async function sendMessage({
   fromNumber: tenant.whatsappNumber,
   toNumber: to,
   messageText: message,
-  direction: 'outbound', // <-- Make sure this is correct
+  direction: 'outbound', 
   conversationId: conversationId,
 }
 );
