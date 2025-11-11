@@ -2,6 +2,10 @@ const axios = require('axios');
 require('dotenv').config();
 const { Op } = require('sequelize');
 const { Tenant, Customer, Order, OrderItem, Product, UsageStat } = require('../models');
+function extractJSON(text) {
+  const jsonMatch = text.match(/\{[\s\S]*\}/);
+  return jsonMatch ? jsonMatch[0] : null;
+}
 
   async function generateResponse(tenantId, customerMessage, conversationContext = {}, customerId = null) {
           const tenant = await Tenant.findByPk(tenantId);
@@ -39,111 +43,29 @@ const { Tenant, Customer, Order, OrderItem, Product, UsageStat } = require('../m
     //     limit: 20
     //   });
 
-    const availableProducts = [
-  {
-    "name": "Plain White T-Shirt",
-    "price": 4500,
-    "stock_quantity": 42,
-    "category": "Tops",
-    "description": "Classic cotton tee for everyday wear"
-  },
-  {
-    "name": "Slim Fit Jeans",
-    "price": 9800,
-    "stock_quantity": 30,
-    "category": "Bottoms",
-    "description": "Dark wash slim jeans, stretch denim"
-  },
-  {
-    "name": "Ankara Short Gown",
-    "price": 12500,
-    "stock_quantity": 12,
-    "category": "Dresses",
-    "description": "African print gown, perfect for occasions"
-  },
-  {
-    "name": "Black Hoodie",
-    "price": 11000,
-    "stock_quantity": 18,
-    "category": "Outerwear",
-    "description": "Fleece-lined hoodie with drawstrings"
-  },
-  {
-    "name": "Chinos (Khaki)",
-    "price": 8700,
-    "stock_quantity": 22,
-    "category": "Bottoms",
-    "description": "Comfortable chinos for casual or office"
-  }, 
-  {
-    "name": "Denim Jacket",
-    "price": 13500,
-    "stock_quantity": 14,
-    "category": "Outerwear",
-    "description": "Stylish distressed denim jacket"
-  },
-  {
-    "name": "Palazzo Trousers",
-    "price": 9200,
-    "stock_quantity": 16,
-    "category": "Bottoms",
-    "description": "High-waisted wide-leg palazzo pants"
-  },
-  {
-    "name": "Bodycon Dress",
-    "price": 10500,
-    "stock_quantity": 20,
-    "category": "Dresses",
-    "description": "Figure-hugging stretchy dress"
-  },
-  {
-    "name": "Traditional Senator Wear",
-    "price": 18000,
-    "stock_quantity": 8,
-    "category": "Traditional",
-    "description": "Well-tailored senator outfit for men"
-  },
-  {
-    "name": "Silk Pyjamas",
-    "price": 7400,
-    "stock_quantity": 25,
-    "category": "Loungewear",
-    "description": "Soft silk two-piece for comfy sleep"
-  }
-]
+     const availableProducts = await Product.findAll({
+      where: {
+        tenantId,
+        status: 'active',
+        available: true
+      },
+      order: [['name', 'ASC']],
+      limit: 50
+    });
 
         // Get recent orders for context
-        const recentOrders = [
-  {
-    "order_number": "ORD10239",
-    "created_at": "2025-06-22T14:25:00Z",
-    "status": "delivered",
-    "total_amount": 22300,
-    "items": [
-      { "name": "Plain White T-Shirt", "quantity": 2, "price": 4500 },
-      { "name": "Chinos (Khaki)", "quantity": 1, "price": 8700 }
-    ]
-  },
-  {
-    "order_number": "ORD10212",
-    "created_at": "2025-06-18T09:40:00Z",
-    "status": "shipped",
-    "total_amount": 13500,
-    "items": [
-      { "name": "Denim Jacket", "quantity": 1, "price": 13500 }
-    ]
-  },
-  {
-    "order_number": "ORD10195",
-    "created_at": "2025-06-14T16:10:00Z",
-    "status": "processing",
-    "total_amount": 19700,
-    "items": [
-      { "name": "Bodycon Dress", "quantity": 1, "price": 10500 },
-      { "name": "Silk Pyjamas", "quantity": 1, "price": 9200 }
-    ]
-  }
-]
+        let recentOrders = []
+
+        recentOrders = await Order.findAll({
+          where: { customerId: customerId, tenantId },
+          include: [{
+            model: OrderItem,
+            as: 'items',
+            include: [{ model: Product, as: 'product' }]
+          }],
+          order: [['createdAt', 'DESC']],
+          limit: 3
+        });
 
 
       // Build enhanced context-aware prompt
@@ -154,24 +76,164 @@ const { Tenant, Customer, Order, OrderItem, Product, UsageStat } = require('../m
       
       // Generate response based on intent
       const response = await callGemini(systemPrompt, customerMessage, intent);
-      
-      // Track token usage
-    //   await this.trackTokenUsage(tenantId, response.usage?.total_tokens || 0);
-      
+    const aiMessage = response.choices[0].message.content;
+
+    // Check for structured actions in AI response
+    if (aiMessage.includes('"action":')) {
+      const jsonStr = extractJSON(aiMessage);
+      if (jsonStr) {
+        try {
+          const actionData = JSON.parse(jsonStr);
+          const actionResult = await handleAIAction(actionData, tenantId, customerId, context);
+
+          console.log("IM HERE", actionResult);
+          
+          if (actionResult) {
+            return {
+              message: actionResult.message,
+              intent: actionData.action,
+              orderId: actionResult.orderId,
+              // paymentLink: actionResult.paymentLink,
+              context: actionResult.context || context
+            };
+          }
+        } catch (parseError) {
+          console.error('JSON parse error:', parseError);
+        }
+      }
+    }
+    
+    return {
+      message: aiMessage,
+      intent: intent,
+      suggested_actions: getSuggestedActions(intent, customer, availableProducts)
+    };
+  } catch (error) {
+    console.error('AI generation error:', error);
+    return {
+      message: getFallbackResponse(tenant?.businessType),
+      intent: 'general',
+      suggested_actions: []
+    };
+  }
+}
+
+async function handleAIAction(actionData, tenantId, customerId, context) {
+  console.log("ACTION DATA:", actionData);
+  switch (actionData.action) {
+    case 'create_order':
+      return await createOrder(tenantId, customerId, actionData);
+
+
+}
+}
+
+async function createOrder(tenantId, customerId, actionData) {  try {
+    if (!customerId) {
       return {
-        message: response.choices[0].message.content,
-        intent: intent,
-        suggested_actions: getSuggestedActions(intent, customer, availableProducts)
-      };
-    } catch (error) {
-      console.error('AI generation error:', error);
-      return {
-        message: getFallbackResponse(tenant?.businessType),
-        intent: 'general',
-        suggested_actions: []
+        message: 'Customer not found. Cannot create order.',
+        success: false
       };
     }
+    
+    const customer = await Customer.findOne({ where: { id: customerId, tenantId } });
+    if (!customer) {
+      return {
+        message: 'Customer not found. Cannot create order.',
+        success: false
+      };
+    }
+
+
+  // Calculate total
+    let totalAmount = 0;
+    const items = [];
+    for (const item of actionData.items) {
+      const product = await Product.findOne({
+        where: { 
+          tenantId,
+          name: item.product_name
+        }
+      });
+      
+      if (!product) {
+        return { 
+          message: `Product ${item.product_name} not found.`,
+          success: false 
+        };
+      }
+
+      if (product.stockQuantity < item.quantity && product.available === false) {
+        return {
+          message: `${product.name} is out of stock and unavailable for pre-order`,
+          success: false
+        };
+      }
+
+      const quantity = parseInt(item.quantity) || 1;
+      const unitPrice = parseFloat(product.price);
+      const subtotal = unitPrice * quantity;
+      totalAmount += subtotal;
+
+      console.log("ITEM:", item, "PRODUCT:", product, "QUANTITY:", quantity, "UNIT PRICE:", unitPrice, "SUBTOTAL:", subtotal);
+
+      items.push({
+        productId: product.id,
+        quantity: item.quantity,
+        price: unitPrice,
+        unitPrice: unitPrice,
+        subtotal: subtotal
+      });
+    }
+
+
+
+    const order = await Order.create({
+      tenantId,
+      customerId,
+      status: 'pending',
+      totalAmount: actionData.total,
+      notes: actionData.notes || null,
+      deliveryAddress: actionData.delivery_address || null,
+      deliveryPhone: actionData.delivery_phone || null
+    });
+
+    for (const item of items) {
+
+          console.log("TWIST ITEM:", item, "SUBTOTAL:", item.subtotal);
+      await OrderItem.create({
+        orderId: order.id,
+        productId: item.productId,
+        quantity: item.quantity,
+        unitPrice: item.unitPrice,
+        subtotal: item.subtotal.toFixed(2)
+      });
+
+      }
+
+    return {
+      message: `${actionData.message || 'Order created successfully!'}\n\nOrder #${order.id}\nTotal: ₦${totalAmount.toFixed(2)}\n\nWe'll contact you shortly for delivery details.`,
+      orderId: order.id,
+      totalAmount: totalAmount.toFixed(2),
+      success: true,
+      context: {
+        lastOrderId: order.id,
+        lastOrderTotal: totalAmount.toFixed(2),
+        lastOrderDate: new Date()
+      }
+    };
+  
+
+}
+  catch (error) {
+    console.error('Create order error:', error);
+    return {
+      message: 'Failed to create order. Please try again.',
+      success: false
+    };
   }
+
+}
 
 function buildEnhancedSystemPrompt(tenant, customer, products, recentOrders, context) {
     const customerInfo = customer ? `
@@ -270,6 +332,54 @@ Response Guidelines
 - Always end with a clear call-to-action (e.g., "Should I send photos?" or "Please provide your address.").
 - For unknown products: "We don’t have that in stock, but I can suggest similar options. What style are you looking for?"
 - Escalate complex issues to ${tenant.contactPerson} at ${tenant.whatsappNumber}.
+
+
+
+CRITICAL: When customer wants to buy something, you MUST respond with VALID JSON ONLY (no extra text):
+
+Example order response:
+{
+  "action": "create_order",
+  "items": [
+    {"product_name": "Plain White T-Shirt", "quantity": 2}
+  ],
+  "total": 9000,
+  "message": "Got it! Creating your order for 2 Plain White T-Shirts.",
+  "delivery_address": "customer address if provided",
+  "delivery_phone": "customer phone if provided",
+  "notes": "any special instructions"
+}
+
+RULES:
+1. Use exact product names from the available products list
+2. "quantity" must be a number
+3. "total" is calculated as: sum of (product price × quantity)
+4. Always include the "action" field
+5. Return ONLY the JSON, no additional text before or after
+
+
+If stock is insufficient, use:
+{
+  "type": "stock_confirmation",
+  "product": "Plain White T-Shirt",
+  "requested": 5,
+  "available": 3,
+  "message": "We have only 3 Plain White T-Shirts available out of 5 you requested. Continue with 3?"
+}
+
+For checking order status:
+{
+  "action": "check_order_status",
+  "order_id": "order_id_here",
+  "message": "Let me check your order status..."
+}
+
+For order history:
+{
+  "action": "get_order_history",
+  "message": "Let me pull up your order history..."
+}
+
 
 Success Metrics
 - Convert inquiries to sales.
